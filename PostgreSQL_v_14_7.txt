@@ -1,0 +1,75 @@
+CREATE TABLE offlineoddsline (
+    id INTEGER PRIMARY KEY,
+    idposstr VARCHAR(100),
+    kf1 NUMERIC,
+    fora1 NUMERIC,
+    kf2 NUMERIC,
+    fora2 NUMERIC,
+    modify_date TIMESTAMP(6)
+);
+
+
+INSERT INTO offlineoddsline (id, idposstr, kf1, fora1, kf2, fora2, modify_date) 
+VALUES 
+(1, 'Котировка 1', 1.5, -0.5, 3, 0.5, TIMESTAMP '2023-03-23 10:30:00.000000'),
+(2, 'Котировка 2', 2.1, 1, 1.8, -1, TIMESTAMP '2023-03-23 11:15:00.000000'),
+(3, 'Котировка 3', 1.8, 2, 2.2, -2, TIMESTAMP '2023-03-23 12:00:00.000000'),
+(4, 'Котировка 4', 1.4, 0, 4, 0, TIMESTAMP '2023-03-23 13:30:00.000000'),
+(5, 'Котировка 5', 2.5, -2.5, 1.5, 2.5, TIMESTAMP '2023-03-23 14:45:00.000000');
+
+
+CREATE OR REPLACE PROCEDURE update_offline_odds(v_str text, OUT vout_status integer) AS
+  v_limit_col text := '~';
+  v_limit_row text := '^;';
+  v_lines text[][];
+BEGIN
+  -- Разбиваем строку на массив записей
+  v_lines := regexp_split_to_array(v_str, v_limit_row || v_limit_col);
+
+  FOR i IN 1 .. array_length(v_lines, 1) LOOP
+    -- Разбиваем запись на отдельные значения
+    DECLARE
+      v_id       integer;
+      v_idposstr text;
+      v_kf1      numeric;
+      v_fora1    numeric;
+      v_kf2      numeric;
+      v_fora2    numeric;
+      v_modify   timestamp;
+    BEGIN
+      v_id       := CAST(v_lines[i][1] AS integer);
+      v_idposstr := v_lines[i][2];
+      v_kf1      := COALESCE(CAST(v_lines[i][3] AS numeric), 0);
+      v_fora1    := COALESCE(CAST(v_lines[i][4] AS numeric), 0);
+      v_kf2      := COALESCE(CAST(v_lines[i][5] AS numeric), 0);
+      v_fora2    := COALESCE(CAST(v_lines[i][6] AS numeric), 0);
+      v_modify   := TO_TIMESTAMP(v_lines[i][7], 'YYYY-MM-DD HH24:MI:SS.US');
+
+      -- Проверяем, есть ли запись с таким ключом
+      IF EXISTS (
+        SELECT 1
+        FROM offlineoddsline
+        WHERE id = v_id
+      ) THEN
+        -- Обновляем только если новая дата модификации позже старой
+        UPDATE offlineoddsline
+        SET idposstr = v_idposstr,
+            kf1 = v_kf1,
+            fora1 = v_fora1,
+            kf2 = v_kf2,
+            fora2 = v_fora2,
+            modify_date = v_modify
+        WHERE id = v_id AND modify_date < v_modify;
+      ELSE
+        -- Иначе вставляем новую запись
+        INSERT INTO offlineoddsline (id, idposstr, kf1, fora1, kf2, fora2, modify_date)
+        VALUES (v_id, v_idposstr, v_kf1, v_fora1, v_kf2, v_fora2, v_modify);
+      END IF;
+    END;
+  END LOOP;
+
+  -- Выполняем внешнюю процедуру
+  CALL modifyofflineevents(v_str, vout_status);
+END;
+
+
